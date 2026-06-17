@@ -11,6 +11,7 @@ class LayoutView:
         self.right = Variable(f"{name}.right" if name else "right")
         self.top = Variable(f"{name}.top" if name else "top")
         self.bottom = Variable(f"{name}.bottom" if name else "bottom")
+        self.baseline = Variable(f"{name}.baseline" if name else "baseline")
 
     @property
     def width(self) -> Expression:
@@ -27,6 +28,9 @@ class LayoutView:
     @property
     def center_y(self) -> Expression:
         return (self.top + self.bottom) / 2.0
+
+    def set_baseline_offset(self, offset_from_top: float, strength: float = Strength.REQUIRED) -> Constraint:
+        return (self.baseline == self.top + offset_from_top).with_strength(strength)
 
     def __repr__(self) -> str:
         return (f"View({self.name}: left={self.left.value:.1f}, right={self.right.value:.1f}, "
@@ -135,3 +139,103 @@ def make_fill_container(view: LayoutView, container: LayoutView,
         (view.top == container.top).with_strength(strength),
         (view.bottom == container.bottom).with_strength(strength),
     ]
+
+
+def make_baseline_aligned(views: List[LayoutView], strength: float = Strength.REQUIRED) -> List[Constraint]:
+    constraints = []
+    if len(views) < 2:
+        return constraints
+
+    first_baseline = views[0].baseline
+    for view in views[1:]:
+        constraints.append((view.baseline == first_baseline).with_strength(strength))
+
+    return constraints
+
+
+def make_proportional_width(views: List[LayoutView], ratios: List[float],
+                          strength: float = Strength.REQUIRED) -> List[Constraint]:
+    constraints = []
+    if len(views) != len(ratios) or len(views) < 2:
+        return constraints
+
+    for i in range(1, len(views)):
+        constraints.append((views[i].width * ratios[0] == views[0].width * ratios[i]).with_strength(strength))
+
+    return constraints
+
+
+def make_proportional_height(views: List[LayoutView], ratios: List[float],
+                             strength: float = Strength.REQUIRED) -> List[Constraint]:
+    constraints = []
+    if len(views) != len(ratios) or len(views) < 2:
+        return constraints
+
+    for i in range(1, len(views)):
+        constraints.append((views[i].height * ratios[0] == views[0].height * ratios[i]).with_strength(strength))
+
+    return constraints
+
+
+def make_aspect_ratio(view: LayoutView, ratio: float,
+                       strength: float = Strength.REQUIRED) -> List[Constraint]:
+    return [
+        (view.width == view.height * ratio).with_strength(strength),
+    ]
+
+
+def make_distribute_proportionally(views: List[LayoutView], container: LayoutView,
+                                ratios: List[float], axis: str = 'x',
+                                spacing: float = 0.0,
+                                padding: float = 0.0,
+                                strength: float = Strength.REQUIRED) -> List[Constraint]:
+    constraints = []
+    if len(views) != len(ratios) or len(views) < 2:
+        return constraints
+
+    total_ratio = sum(ratios)
+    if total_ratio <= 0:
+        return constraints
+
+    if axis == 'x':
+        total_space = container.right - container.left - 2 * padding - (len(views) - 1) * spacing
+        cumulative = padding
+        for i, (view, ratio) in enumerate(zip(views, ratios)):
+            if i == 0:
+                constraints.append((view.left == container.left + padding).with_strength(strength))
+            else:
+                constraints.append((view.left == views[i - 1].right + spacing).with_strength(strength))
+            constraints.append((view.width * total_ratio == total_space * ratio).with_strength(strength))
+        constraints.append((views[-1].right == container.right - padding).with_strength(strength))
+    else:
+        total_space = container.bottom - container.top - 2 * padding - (len(views) - 1) * spacing
+        cumulative = padding
+        for i, (view, ratio) in enumerate(zip(views, ratios)):
+            if i == 0:
+                constraints.append((view.top == container.top + padding).with_strength(strength))
+            else:
+                constraints.append((view.top == views[i - 1].bottom + spacing).with_strength(strength))
+            constraints.append((view.height * total_ratio == total_space * ratio).with_strength(strength))
+        constraints.append((views[-1].bottom == container.bottom - padding).with_strength(strength))
+
+    return constraints
+
+
+def make_trailing_aligned(views: List[LayoutView], strength: float = Strength.REQUIRED) -> List[Constraint]:
+    constraints = []
+    if len(views) < 2:
+        return constraints
+    first_right = views[0].right
+    for view in views[1:]:
+        constraints.append((view.right == first_right).with_strength(strength))
+    return constraints
+
+
+def make_bottom_aligned(views: List[LayoutView], strength: float = Strength.REQUIRED) -> List[Constraint]:
+    constraints = []
+    if len(views) < 2:
+        return constraints
+    first_bottom = views[0].bottom
+    for view in views[1:]:
+        constraints.append((view.bottom == first_bottom).with_strength(strength))
+    return constraints

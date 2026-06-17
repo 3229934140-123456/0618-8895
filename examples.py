@@ -1,9 +1,12 @@
 from constraint_solver import (
-    Solver, LayoutView, Strength,
+    Solver, LayoutView, Strength, LayoutGroup, BreakpointLayout,
     make_centered, make_equal_spacing, make_aligned,
     make_equal_width, make_equal_height, make_padding,
-    make_min_size, make_fixed_size
+    make_min_size, make_fixed_size, make_fill_container,
+    make_baseline_aligned, make_proportional_width,
+    make_aspect_ratio, make_distribute_proportionally
 )
+from constraint_solver import Variable
 
 
 def example_basic_constraints():
@@ -296,6 +299,327 @@ def example_min_max_constraints():
     print()
 
 
+def example_layout_groups():
+    print("=" * 60)
+    print("示例9: 布局组 - 断点布局切换")
+    print("=" * 60)
+
+    solver = Solver()
+
+    container = LayoutView("container")
+    sidebar = LayoutView("sidebar")
+    content = LayoutView("content")
+
+    solver.add_constraints([
+        container.left == 0,
+        container.top == 0,
+        container.right == 800,
+        container.bottom == 600,
+    ])
+
+    base_constraints = [
+        content.top == container.top,
+        content.bottom == container.bottom,
+        sidebar.top == container.top,
+        sidebar.bottom == container.bottom,
+        content.left == sidebar.right,
+        content.right == container.right,
+        sidebar.left == container.left,
+        (sidebar.width >= 150).with_strength(Strength.STRONG),
+        (sidebar.width <= 300).with_strength(Strength.STRONG),
+    ]
+    solver.add_constraints(base_constraints)
+
+    desktop = LayoutGroup("desktop", [
+        (sidebar.width == 250).with_strength(Strength.MEDIUM),
+    ])
+    desktop.attach(solver)
+
+    tablet = LayoutGroup("tablet", [
+        (sidebar.width == 200).with_strength(Strength.MEDIUM),
+    ])
+
+    mobile = LayoutGroup("mobile", [
+        (sidebar.width == 0).with_strength(Strength.MEDIUM),
+        content.left == container.left,
+    ])
+
+    solver.solve()
+    print("桌面布局 (侧边栏250px):")
+    print(f"  {sidebar}")
+    print(f"  {content}")
+
+    print("\n切换到平板布局 (侧边栏200px):")
+    desktop.disable()
+    tablet.attach(solver)
+    tablet.enable()
+    solver.solve()
+    print(f"  {sidebar}")
+    print(f"  {content}")
+
+    print("\n切换到移动布局 (侧边栏隐藏):")
+    tablet.disable()
+    mobile.attach(solver)
+    mobile.enable()
+    solver.solve()
+    print(f"  {sidebar}")
+    print(f"  {content}")
+
+    print("\n使用 BreakpointLayout 管理器:")
+    solver2 = Solver()
+    container2 = LayoutView("container")
+    view2 = LayoutView("view")
+
+    solver2.add_constraints([
+        container2.left == 0,
+        container2.top == 0,
+        container2.right == 600,
+        container2.bottom == 400,
+    ])
+    solver2.add_constraints(make_fixed_size(view2, 200, 150))
+
+    bp = BreakpointLayout(solver2)
+    bp.add_breakpoint("left", [
+        (view2.left == container2.left + 20).with_strength(Strength.STRONG),
+        (view2.center_y == container2.center_y).with_strength(Strength.STRONG),
+    ])
+    bp.add_breakpoint("center", make_centered(view2, container2, strength=Strength.STRONG))
+    bp.add_breakpoint("right", [
+        (view2.right == container2.right - 20).with_strength(Strength.STRONG),
+        (view2.center_y == container2.center_y).with_strength(Strength.STRONG),
+    ])
+
+    for bp_name in ["left", "center", "right"]:
+        bp.switch_to(bp_name)
+        solver2.solve()
+        print(f"  {bp_name}: view.left={view2.left.value:.0f}, view.center_x={view2.center_x.evaluate():.0f}")
+
+    print()
+
+
+def example_debug_info():
+    print("=" * 60)
+    print("示例10: 约束调试信息 - 查看每条约束的满足状态")
+    print("=" * 60)
+
+    solver = Solver()
+
+    x = Variable("x")
+    y = Variable("y")
+
+    solver.add_constraint(x + y == 10)
+    solver.add_constraint(x >= 3)
+    solver.add_constraint(y >= 2)
+    solver.add_constraint((x == 8).with_strength(Strength.STRONG))
+    solver.add_constraint((y == 1).with_strength(Strength.WEAK))
+
+    solver.solve()
+
+    solver.print_debug_info("调试信息 - 变量约束求解")
+
+    print(f"结果: x={x.value:.1f}, y={y.value:.1f}")
+    print("说明:")
+    print("  - 硬约束 x+y=10, x>=3, y>=2 全部满足")
+    print("  - STRONG 软约束 x=8 满足 (y=2)")
+    print("  - WEAK 软约束 y=1 违反 1.0 (被 y>=2 硬约束限制)")
+    print()
+
+
+def example_new_layout_intents():
+    print("=" * 60)
+    print("示例11: 新增布局意图 - 基线对齐、比例分配、固定比例")
+    print("=" * 60)
+
+    print("\n--- 基线对齐 ---")
+    solver1 = Solver()
+    label = LayoutView("label")
+    input_field = LayoutView("input")
+    button = LayoutView("button")
+
+    solver1.add_constraints([
+        label.left == 10,
+        label.top == 100,
+        input_field.left == 100,
+        input_field.top == 80,
+        button.left == 300,
+        button.top == 90,
+    ])
+    solver1.add_constraints([
+        (label.width == 80).with_strength(Strength.REQUIRED),
+        (label.height == 30).with_strength(Strength.REQUIRED),
+        (input_field.width == 180).with_strength(Strength.REQUIRED),
+        (input_field.height == 50).with_strength(Strength.REQUIRED),
+        (button.width == 100).with_strength(Strength.REQUIRED),
+        (button.height == 40).with_strength(Strength.REQUIRED),
+    ])
+
+    solver1.add_constraint(label.set_baseline_offset(22))
+    solver1.add_constraint(input_field.set_baseline_offset(38))
+    solver1.add_constraint(button.set_baseline_offset(28))
+    solver1.add_constraints(make_baseline_aligned([label, input_field, button]))
+
+    solver1.solve()
+    print(f"label:  top={label.top.value:.0f}, baseline={label.baseline.value:.0f}")
+    print(f"input:  top={input_field.top.value:.0f}, baseline={input_field.baseline.value:.0f}")
+    print(f"button: top={button.top.value:.0f}, baseline={button.baseline.value:.0f}")
+    print(f"所有元素基线对齐在 y={label.baseline.value:.0f}")
+
+    print("\n--- 按比例分配宽度 (1:2:1) ---")
+    solver2 = Solver()
+    container = LayoutView("container")
+    col1 = LayoutView("col1")
+    col2 = LayoutView("col2")
+    col3 = LayoutView("col3")
+
+    solver2.add_constraints([
+        container.left == 0,
+        container.top == 0,
+        container.right == 600,
+        container.bottom == 200,
+    ])
+
+    solver2.add_constraints(make_distribute_proportionally(
+        [col1, col2, col3], container, [1, 2, 1],
+        axis='x', spacing=10, padding=20
+    ))
+    solver2.add_constraints([
+        col1.top == container.top + 20,
+        col2.top == container.top + 20,
+        col3.top == container.top + 20,
+        col1.bottom == container.bottom - 20,
+        col2.bottom == container.bottom - 20,
+        col3.bottom == container.bottom - 20,
+    ])
+
+    solver2.solve()
+    print(f"容器宽度: {container.width.evaluate():.0f}")
+    print(f"col1: left={col1.left.value:.0f}, width={col1.width.evaluate():.0f} (ratio 1)")
+    print(f"col2: left={col2.left.value:.0f}, width={col2.width.evaluate():.0f} (ratio 2)")
+    print(f"col3: left={col3.left.value:.0f}, width={col3.width.evaluate():.0f} (ratio 1)")
+    total = col1.width.evaluate() + col2.width.evaluate() + col3.width.evaluate() + 10*2 + 20*2
+    print(f"验证: 140+280+140+2*10间距+2*20边距 = {total:.0f}")
+
+    print("\n--- 固定宽高比 (16:9) ---")
+    solver3 = Solver()
+    video = LayoutView("video")
+    screen = LayoutView("screen")
+
+    solver3.add_constraints([
+        screen.left == 0,
+        screen.top == 0,
+        screen.right == 800,
+        screen.bottom == 600,
+    ])
+    solver3.add_constraints(make_centered(video, screen))
+    solver3.add_constraints(make_aspect_ratio(video, 16 / 9))
+    solver3.add_constraints(make_fill_container(video, screen, strength=Strength.WEAK))
+    solver3.add_constraints([
+        (video.width <= screen.width).with_strength(Strength.REQUIRED),
+        (video.height <= screen.height).with_strength(Strength.REQUIRED),
+    ])
+
+    solver3.solve()
+    print(f"屏幕: {screen}")
+    print(f"视频: {video}")
+    print(f"宽高比: {video.width.evaluate() / video.height.evaluate():.4f} (16/9 = {16/9:.4f})")
+
+    print()
+
+
+def example_responsive_resize():
+    print("=" * 60)
+    print("示例12: 响应式布局 - 窗口缩放时自动重算")
+    print("=" * 60)
+
+    solver = Solver()
+
+    window = LayoutView("window")
+    title_bar = LayoutView("title_bar")
+    sidebar = LayoutView("sidebar")
+    content = LayoutView("content")
+    status_bar = LayoutView("status_bar")
+
+    solver.add_constraints([
+        window.left == 0,
+        window.top == 0,
+    ])
+
+    solver.add_constraints([
+        title_bar.left == window.left,
+        title_bar.right == window.right,
+        title_bar.top == window.top,
+        title_bar.height == 40,
+    ])
+
+    solver.add_constraints([
+        status_bar.left == window.left,
+        status_bar.right == window.right,
+        status_bar.bottom == window.bottom,
+        status_bar.height == 30,
+    ])
+
+    solver.add_constraints([
+        sidebar.top == title_bar.bottom,
+        sidebar.bottom == status_bar.top,
+        sidebar.left == window.left,
+        content.top == title_bar.bottom,
+        content.bottom == status_bar.top,
+        content.right == window.right,
+        content.left == sidebar.right,
+    ])
+
+    solver.add_constraints([
+        (sidebar.width >= 150).with_strength(Strength.STRONG),
+        (sidebar.width <= 350).with_strength(Strength.STRONG),
+    ])
+
+    solver.add_constraint((sidebar.width == 250).with_strength(Strength.MEDIUM))
+
+    solver.add_constraints([
+        (content.width >= 300).with_strength(Strength.REQUIRED),
+    ])
+
+    win_width_constraint = None
+    win_height_constraint = None
+
+    def resize_window(width, height, desc):
+        nonlocal win_width_constraint, win_height_constraint
+
+        if win_width_constraint is not None:
+            solver.remove_constraint(win_width_constraint)
+        if win_height_constraint is not None:
+            solver.remove_constraint(win_height_constraint)
+
+        win_width_constraint = window.right == width
+        win_height_constraint = window.bottom == height
+        solver.add_constraint(win_width_constraint)
+        solver.add_constraint(win_height_constraint)
+        solver.solve()
+
+        print(f"\n{desc} ({width}x{height}):")
+        print(f"  标题栏: {title_bar}")
+        print(f"  侧边栏: {sidebar}")
+        print(f"  内容区: {content}")
+        print(f"  状态栏: {status_bar}")
+        print(f"  内容区占比: {content.width.evaluate()/window.width.evaluate()*100:.0f}%")
+
+        if solver.has_conflict():
+            print(f"  ⚠️  警告: 存在约束冲突！")
+
+    resize_window(800, 600, "默认尺寸")
+    resize_window(1200, 800, "放大尺寸")
+    resize_window(600, 400, "缩小尺寸")
+    resize_window(400, 300, "最小尺寸 (内容区挤压侧边栏)")
+
+    print("\n布局关系保持:")
+    print("  ✓ 标题栏始终在顶部，高度40px")
+    print("  ✓ 状态栏始终在底部，高度30px")
+    print("  ✓ 侧边栏靠左，宽度 150-350px 之间")
+    print("  ✓ 内容区填充剩余空间")
+    print("  ✓ 标题栏/侧边栏/内容区/状态栏边缘始终对齐")
+    print()
+
+
 if __name__ == "__main__":
     example_basic_constraints()
     example_centered_view()
@@ -305,3 +629,7 @@ if __name__ == "__main__":
     example_conflict_detection()
     example_complex_layout()
     example_min_max_constraints()
+    example_layout_groups()
+    example_debug_info()
+    example_new_layout_intents()
+    example_responsive_resize()

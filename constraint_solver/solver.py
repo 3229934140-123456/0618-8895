@@ -200,8 +200,6 @@ class Solver:
         if constraint in self._error_vars:
             e_plus, e_minus = self._error_vars[constraint]
             del self._error_vars[constraint]
-            self._objective.add_var(e_plus, -constraint.strength)
-            self._objective.add_var(e_minus, -constraint.strength)
             self._remove_var(e_plus)
             self._remove_var(e_minus)
 
@@ -248,6 +246,10 @@ class Solver:
             self._extract_values()
             return
 
+        if not self._is_basis_feasible():
+            self._reset_and_resolve()
+            return
+
         if self._artificial_vars:
             self._phase1()
 
@@ -255,9 +257,32 @@ class Solver:
             self._extract_values()
             return
 
+        self._rebuild_objective()
         self._optimize()
         self._extract_values()
         self._optimized = True
+
+    def _is_basis_feasible(self) -> bool:
+        for var, row in self._rows.items():
+            if row.constant < -1e-6:
+                return False
+        return True
+
+    def _reset_and_resolve(self) -> None:
+        constraints = list(self._constraints)
+        self.__init__()
+        for c in constraints:
+            self.add_constraint(c)
+        self.solve()
+
+    def _rebuild_objective(self) -> None:
+        self._objective = _Row()
+        for constraint, (e_plus, e_minus) in self._error_vars.items():
+            if constraint.is_inequality():
+                self._objective.add_var(e_plus, constraint.strength)
+            else:
+                self._objective.add_var(e_plus, constraint.strength)
+                self._objective.add_var(e_minus, constraint.strength)
 
     def _phase1(self) -> None:
         old_objective = self._objective
@@ -451,6 +476,100 @@ class Solver:
         if not self._optimized:
             self.solve()
         return self._infeasible
+
+    def constraint_violation(self, constraint: Constraint) -> float:
+        if not self._optimized:
+            self.solve()
+        value = constraint.expression.evaluate()
+        if constraint.relation == Relation.LE:
+            return max(0.0, value)
+        elif constraint.relation == Relation.GE:
+            return max(0.0, -value)
+        else:
+            return abs(value)
+
+    def constraint_error(self, constraint: Constraint) -> Tuple[float, float]:
+        if constraint not in self._error_vars:
+            return (0.0, 0.0)
+        e_plus, e_minus = self._error_vars[constraint]
+        return (e_plus.value, e_minus.value)
+
+    def get_constraint_debug_info(self) -> List[Dict]:
+        if not self._optimized:
+            self.solve()
+
+        debug_info = []
+        for constraint in sorted(self._constraints, key=lambda c: (-c.strength, str(c))):
+            value = constraint.expression.evaluate()
+            violation = self.constraint_violation(constraint)
+            e_plus, e_minus = self.constraint_error(constraint)
+            is_soft = not constraint.is_required()
+            is_satisfied = violation < 1e-6
+
+            if constraint.relation == Relation.LE:
+                status_symbol = "✓" if is_satisfied else "✗"
+            elif constraint.relation == Relation.GE:
+                status_symbol = "✓" if is_satisfied else "✗"
+            else:
+                status_symbol = "✓" if is_satisfied else "✗"
+
+            info = {
+                'constraint': constraint,
+                'strength': Strength.name(constraint.strength),
+                'strength_value': constraint.strength,
+                'is_soft': is_soft,
+                'is_satisfied': is_satisfied,
+                'status_symbol': status_symbol,
+                'expression_value': value,
+                'violation': violation,
+                'e_plus': e_plus,
+                'e_minus': e_minus,
+            }
+            debug_info.append(info)
+
+        return debug_info
+
+    def print_debug_info(self, title: str = "Constraint Debug Info") -> None:
+        debug_info = self.get_constraint_debug_info()
+
+        print("=" * 80)
+        print(f"  {title}")
+        print("=" * 80)
+        print(f"  {'Status':<6} {'Priority':<10} {'Type':<6} {'Violation':>10}  Constraint")
+        print("-" * 80)
+
+        total_violation = 0.0
+        soft_count = 0
+        hard_count = 0
+        satisfied_count = 0
+
+        for info in debug_info:
+            v = info['violation']
+            total_violation += v
+            if info['is_satisfied']:
+                satisfied_count += 1
+            if info['is_soft']:
+                soft_count += 1
+                type_str = "SOFT"
+            else:
+                hard_count += 1
+                type_str = "HARD"
+
+            constraint_str = str(info['constraint'])
+            if len(constraint_str) > 55:
+                constraint_str = constraint_str[:52] + "..."
+
+            print(f"  {info['status_symbol']:<6} {info['strength']:<10} {type_str:<6} {v:>10.4f}  {constraint_str}")
+
+        print("-" * 80)
+        print(f"  Total constraints: {len(debug_info)} (HARD: {hard_count}, SOFT: {soft_count})")
+        print(f"  Satisfied: {satisfied_count}/{len(debug_info)}")
+        if soft_count > 0:
+            print(f"  Objective value (weighted violation): {self._objective.constant:.4f}")
+        if self._infeasible:
+            print(f"  ⚠️  HARD CONSTRAINT CONFLICT DETECTED!")
+        print("=" * 80)
+        print()
 
     def reset(self) -> None:
         self._constraints.clear()
